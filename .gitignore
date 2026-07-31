@@ -1,0 +1,23 @@
+# PyInstaller build output (regenerate with: python -m PyInstaller Bendo.spec)
+build/
+dist/
+
+# Inno Setup installer output (regenerate with: ISCC.exe Bendo_installer.iss)
+installer/
+Bendo-Setup-*.exe
+
+# Python
+__pycache__/
+*.pyc
+
+# Bendo's own runtime files (created in %APPDATA%, never in the repo, but
+# ignored here too in case the app is ever run from this folder)
+bendo_config.json
+bendo_notes_autosave.txt
+bendo_icon.ico
+
+# Editors / OS cruft
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

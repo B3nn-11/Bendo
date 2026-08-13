@@ -1055,6 +1055,12 @@ BENDO_ICON_ICO_B64 = (
 
 APP_NAME = "Bendo"
 RULE_NAME = "Bendo_InternetBlock"
+
+# Set by the Lite build's PyInstaller runtime hook (see Bendo-Lite.spec).
+# Lite ships only the five core tools and compiles out the heavy optional
+# libraries (Pillow/pystray/winrt/speedtest/psutil) for a smaller exe -
+# which also means no system tray and no speed test in that edition.
+LITE_BUILD = os.environ.get("BENDO_LITE") == "1"
 APPDATA_DIR = os.environ.get("APPDATA", os.path.expanduser("~"))
 CONFIG_PATH = os.path.join(APPDATA_DIR, "bendo_config.json")
 NOTES_AUTOSAVE_PATH = os.path.join(APPDATA_DIR, "bendo_notes_autosave.txt")
@@ -1560,7 +1566,7 @@ class BendoApp:
             threading.Thread(target=self._media_loop.run_forever, daemon=True).start()
         self._media_user_seeking = False
 
-        root.title(APP_NAME)
+        root.title(APP_NAME + (" Lite" if LITE_BUILD else ""))
         root.resizable(False, False)
         icon_path = ensure_icon_file()
         try:
@@ -1586,7 +1592,8 @@ class BendoApp:
         self._register_mute_hotkey()
         self._register_clicker_hotkey()
         self._build_tray_icon()
-        if not self.cfg.get("onboarding_shown"):
+        # Lite has no optional tools to offer, so onboarding is skipped
+        if not self.cfg.get("onboarding_shown") and not LITE_BUILD:
             self.root.after(400, self._show_onboarding)
         self.root.attributes("-topmost", self.cfg["on_top"])
 
@@ -1624,6 +1631,12 @@ class BendoApp:
     THEME_LABELS = {"light": "Light", "dark": "Dark", "custom": "Custom"}
     THEME_LABELS_REV = {v: k for k, v in THEME_LABELS.items()}
 
+    def _known_tab_ids(self):
+        """All tab ids this edition offers (Lite = just the core tools)."""
+        if LITE_BUILD:
+            return [t for t in self.TAB_LABELS if t in CORE_TAB_IDS]
+        return list(self.TAB_LABELS)
+
     TAB_ROW_OPTIONS = ["Auto", "1", "2", "3", "4"]
 
     def _build_ui(self):
@@ -1648,7 +1661,7 @@ class BendoApp:
 
         # Drop any stale ids from an old config and append any new ones,
         # so tab_order/tab_visible always cover exactly the known tabs.
-        known = list(self.TAB_LABELS)
+        known = self._known_tab_ids()
         order = [t for t in self.cfg.get("tab_order", []) if t in known]
         order += [t for t in known if t not in order]
         self.cfg["tab_order"] = order
@@ -1737,20 +1750,21 @@ class BendoApp:
         self.ping_status = ttk.Label(frm, text="", foreground=self._fg("normal"))
         self.ping_status.grid(row=10, column=0, columnspan=3, sticky="w", **pad)
 
-        speed_row = ttk.Frame(frm)
-        speed_row.grid(row=11, column=0, columnspan=3, sticky="w", **pad)
-        self.speedtest_btn = ttk.Button(speed_row, text="Run Speed Test",
-                                        command=self._run_speed_test, takefocus=0)
-        self.speedtest_btn.grid(row=0, column=0)
-        if speedtest is None:
-            self.speedtest_btn.config(state="disabled")
+        if not LITE_BUILD:  # the speed test isn't part of the Lite edition
+            speed_row = ttk.Frame(frm)
+            speed_row.grid(row=11, column=0, columnspan=3, sticky="w", **pad)
+            self.speedtest_btn = ttk.Button(speed_row, text="Run Speed Test",
+                                            command=self._run_speed_test, takefocus=0)
+            self.speedtest_btn.grid(row=0, column=0)
+            if speedtest is None:
+                self.speedtest_btn.config(state="disabled")
 
-        self.speedtest_status = ttk.Label(
-            frm, text="" if speedtest is not None else
-            "Install 'speedtest-cli' for the speed test (pip install speedtest-cli).",
-            foreground=self._fg("normal") if speedtest is not None
-                       else self._fg("error"))
-        self.speedtest_status.grid(row=12, column=0, columnspan=3, sticky="w", **pad)
+            self.speedtest_status = ttk.Label(
+                frm, text="" if speedtest is not None else
+                "Install 'speedtest-cli' for the speed test (pip install speedtest-cli).",
+                foreground=self._fg("normal") if speedtest is not None
+                           else self._fg("error"))
+            self.speedtest_status.grid(row=12, column=0, columnspan=3, sticky="w", **pad)
 
         self._refresh_network_info()
 
@@ -3337,7 +3351,7 @@ class BendoApp:
         merged = copy.deepcopy(DEFAULT_CONFIG)
         merged.update({k: v for k, v in data.items() if k in DEFAULT_CONFIG})
         sanitize_config(merged)
-        known = list(self.TAB_LABELS)
+        known = self._known_tab_ids()
         order = [t for t in merged.get("tab_order", []) if t in known]
         order += [t for t in known if t not in order]
         merged["tab_order"] = order
@@ -3489,8 +3503,12 @@ class BendoApp:
                             command=self._on_close_behavior_change, takefocus=0).grid(
                 row=next(row), column=0, sticky="w", padx=10)
         else:
-            ttk.Label(frm, text="System tray isn't available (install pystray), "
-                                 "so closing the window always exits the app.",
+            no_tray_msg = ("Bendo Lite doesn't include the system tray, so "
+                           "closing the window exits the app."
+                           if LITE_BUILD else
+                           "System tray isn't available (install pystray), "
+                           "so closing the window always exits the app.")
+            ttk.Label(frm, text=no_tray_msg,
                       foreground=self._fg("muted"), wraplength=360, justify="left").grid(
                 row=next(row), column=0, sticky="w", padx=10, pady=(4, 0))
 
@@ -3590,10 +3608,11 @@ class BendoApp:
         ttk.Separator(frm, orient="horizontal").grid(
             row=next(row), column=0, sticky="ew", padx=10, pady=(14, 10))
 
-        ttk.Label(frm, text="Help", font=("", 9, "bold")).grid(
-            row=next(row), column=0, sticky="w", padx=10)
-        ttk.Button(frm, text="Show onboarding again", command=self._show_onboarding,
-                  takefocus=0).grid(row=next(row), column=0, sticky="w", padx=10, pady=(4, 0))
+        if not LITE_BUILD:  # Lite has no optional tools, so no onboarding
+            ttk.Label(frm, text="Help", font=("", 9, "bold")).grid(
+                row=next(row), column=0, sticky="w", padx=10)
+            ttk.Button(frm, text="Show onboarding again", command=self._show_onboarding,
+                      takefocus=0).grid(row=next(row), column=0, sticky="w", padx=10, pady=(4, 0))
 
         self._refresh_settings_rows()
 
@@ -4060,8 +4079,9 @@ class BendoApp:
         self._rebuild_tab_bar()
 
     def _reset_tab_settings(self):
-        self.cfg["tab_order"] = list(self.TAB_LABELS)
-        self.cfg["tab_visible"] = dict(DEFAULT_CONFIG["tab_visible"])
+        self.cfg["tab_order"] = self._known_tab_ids()
+        self.cfg["tab_visible"] = {t: DEFAULT_CONFIG["tab_visible"][t]
+                                   for t in self._known_tab_ids()}
         save_config(self.cfg)
         self._rebuild_tab_bar()
         self._refresh_settings_rows()

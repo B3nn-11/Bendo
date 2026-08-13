@@ -38,6 +38,15 @@ adds Start Menu/desktop shortcuts and a proper uninstaller, and includes a
 tools you want. You can add or remove any tool later with one click in
 Bendo's Settings tab - nothing to reinstall.
 
+### Bendo Lite
+
+Prefer something smaller? `Bendo-Lite.exe` (also on the Releases page) is
+a portable, no-install build with just the five core tools - Internet
+Blocker, Shutdown Scheduler, Volume Mixer, Notes, and Power. Trade-offs:
+no system tray (closing the window exits) and no speed test, since the
+libraries behind those are compiled out. Download it and run it - nothing
+to install or uninstall.
+
 ## Run from source
 
 ```
@@ -51,11 +60,14 @@ the tab(s) that need them disabled.
 ## Build
 
 ```
-python -m PyInstaller Bendo.spec
+python -m PyInstaller Bendo.spec        # full edition -> dist\Bendo.exe
+python -m PyInstaller Bendo-Lite.spec   # Lite edition -> dist\Bendo-Lite.exe
 ```
 
-Produces a self-contained `dist\Bendo.exe` (the spec carries the icon,
-UAC-admin manifest, and version resource).
+Both are self-contained single files (the specs carry the icon, UAC-admin
+manifest, and version resource). The Lite spec flips the app into
+core-tools-only mode via a runtime hook and compiles out the optional
+tools' libraries.
 
 ### Build the installer
 

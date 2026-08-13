@@ -1,9 +1,17 @@
-# Bendo
+<p align="center">
+  <img src="Bendo.png" alt="Bendo logo" width="128">
+</p>
 
-A multi-purpose, all-in-one desktop toolbox for Windows. Cut your internet
-with a hotkey when you need to focus, schedule a shutdown/restart/hibernate,
-control app and master volume, jot notes, and more - all from one window
-that tucks into the system tray.
+<h1 align="center">Bendo</h1>
+
+<p align="center">
+  A multi-purpose, all-in-one desktop toolbox for Windows<br>
+  by <a href="https://benmckenzie.dev">Ben McKenzie</a>
+</p>
+
+Cut your internet with a hotkey when you need to focus, schedule a
+shutdown/restart/hibernate, control app and master volume, jot notes, and
+more - all from one window that tucks into the system tray.
 
 ## Features
 
@@ -79,3 +87,9 @@ ISCC.exe Bendo_installer.iss
 
 Produces `installer\Bendo-Setup-<version>.exe`, ready to attach to a
 GitHub Release.
+
+---
+
+<p align="center">
+  Made by <a href="https://benmckenzie.dev">benmckenzie.dev</a>
+</p>

@@ -9,7 +9,7 @@
 ; Bendo creates (startup scheduled task, firewall rule) on uninstall.
 
 #define MyAppName "Bendo"
-#define MyAppVersion "1.2.0"
+#define MyAppVersion "1.3.0"
 #define MyAppPublisher "Ben McKenzie"
 #define MyAppExeName "Bendo.exe"
 

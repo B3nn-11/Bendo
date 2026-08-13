@@ -33,6 +33,9 @@ more - all from one window that tucks into the system tray.
   Backup & Restore (export/import all settings as JSON)
 - Minimizes to the **system tray** instead of closing, with quick actions
   and shutdown-countdown notifications
+- **Update checker** - on startup Bendo asks GitHub if a newer release
+  exists and, if so, shows what's new and offers a one-click update
+  (optional; can be turned off in Settings)
 
 Bendo needs administrator rights (to modify firewall rules and schedule a
 shutdown) and relaunches itself elevated automatically.

@@ -48,6 +48,8 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.request
+import webbrowser
 import asyncio
 import calendar as calendar_module
 import datetime
@@ -1054,6 +1056,11 @@ BENDO_ICON_ICO_B64 = (
 
 
 APP_NAME = "Bendo"
+# Keep in step with Bendo_version_info.txt / Bendo_Lite_version_info.txt /
+# Bendo_installer.iss when releasing - the update checker compares this
+# against the latest GitHub release tag.
+APP_VERSION = "1.3.0"
+UPDATE_REPO = "B3nn-11/Bendo"
 RULE_NAME = "Bendo_InternetBlock"
 
 # Set by the Lite build's PyInstaller runtime hook (see Bendo-Lite.spec).
@@ -1098,6 +1105,8 @@ DEFAULT_CONFIG = {
     "reminders": [],
     "calendar_events": {},
     "onboarding_shown": False,
+    "check_updates": True,
+    "skipped_update": "",  # release tag the user chose to skip
     "tab_rows": "Auto",  # "Auto", "1", "2", "3", or "4"
     "tab_order": ["internet", "shutdown", "mixer", "notes", "power",
                   "clicker", "timer", "clipboard", "stats", "bookshelf",
@@ -1517,6 +1526,12 @@ def build_custom_palette(bg, fg):
             "select_bg": "#0a84ff", "select_fg": "#ffffff"}
 
 
+def _parse_version(tag):
+    """'v1.2.0' / '1.2' -> (1, 2, 0)-style tuple for comparison."""
+    numbers = re.findall(r"\d+", tag or "")
+    return tuple(int(n) for n in numbers[:3])
+
+
 def format_hms(total_seconds):
     days, rem = divmod(total_seconds, 86400)
     hours, rem = divmod(rem, 3600)
@@ -1554,6 +1569,8 @@ class BendoApp:
         self._capture_gens = {"main": 0, "mute": 0, "clicker": 0}
         self._status_fg = STATUS_FG_LIGHT  # replaced by _apply_theme
         self._pillow_installing = False
+        self._update_win = None
+        self._update_buttons = []
         self.tray_icon = None
         self.clicker_running = False
         self.clicker_stop_event = threading.Event()
@@ -1605,6 +1622,9 @@ class BendoApp:
         if not self.cfg.get("onboarding_shown") and not LITE_BUILD:
             self.root.after(400, self._show_onboarding)
         self._maybe_auto_install_pillow()
+        if self.cfg.get("check_updates", True):
+            # small delay so the window is settled before any dialog appears
+            self.root.after(3000, self._check_updates_async)
         self.root.attributes("-topmost", self.cfg["on_top"])
 
         unblock_internet()  # recover if a previous run crashed while blocking
@@ -3132,6 +3152,180 @@ class BendoApp:
             self.events.put(("converter_progress", (i, len(files))))
         self.events.put(("converter_done", errors))
 
+    # ----- update check (GitHub releases) -----
+    def _toggle_check_updates(self):
+        self.cfg["check_updates"] = self.check_updates_var.get()
+        save_config(self.cfg)
+
+    def _check_updates_async(self, manual=False):
+        if manual and hasattr(self, "update_status"):
+            self.update_status.config(text="Checking for updates...",
+                                      foreground=self._fg("normal"))
+        threading.Thread(target=self._update_check_worker, args=(manual,),
+                         daemon=True).start()
+
+    def _update_check_worker(self, manual):
+        try:
+            req = urllib.request.Request(
+                f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest",
+                headers={"User-Agent": f"{APP_NAME}/{APP_VERSION}",
+                         "Accept": "application/vnd.github+json"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.load(resp)
+        except Exception:
+            data = None  # offline / rate limited / API change: stay quiet
+        self.events.put(("update_check_result", (manual, data)))
+
+    def _handle_update_check(self, manual, data):
+        latest_tag = (data or {}).get("tag_name", "")
+        latest = _parse_version(latest_tag)
+        if data is None or not latest:
+            if manual:
+                self.update_status.config(
+                    text="Update check failed - check your internet connection.",
+                    foreground=self._fg("error"))
+            return
+        if latest <= _parse_version(APP_VERSION):
+            if manual:
+                self.update_status.config(
+                    text=f"You're up to date (v{APP_VERSION}).",
+                    foreground=self._fg("normal"))
+            return
+        if not manual and latest_tag == self.cfg.get("skipped_update"):
+            return  # the user already said no to this version
+        if manual:
+            self.update_status.config(text=f"{latest_tag} is available.",
+                                      foreground=self._fg("normal"))
+        self._show_update_dialog(data)
+
+    def _show_update_dialog(self, data):
+        if self._update_win is not None and self._update_win.winfo_exists():
+            return
+        win = tk.Toplevel(self.root)
+        self._update_win = win
+        win.title("Update available")
+        win.resizable(False, False)
+        win.transient(self.root)
+        pal = self._theme_palette
+        win.configure(bg=pal["bg"])
+
+        frm = ttk.Frame(win, padding=16)
+        frm.grid()
+        tag = data.get("tag_name", "?")
+        ttk.Label(frm, text=f"Bendo {tag} is available",
+                  font=("", 11, "bold")).grid(row=0, column=0, sticky="w")
+        edition = " Lite" if LITE_BUILD else ""
+        ttk.Label(frm, text=f"You have v{APP_VERSION}{edition}.",
+                  foreground=self._fg("muted")).grid(row=1, column=0,
+                                                     sticky="w", pady=(0, 10))
+        ttk.Label(frm, text="What's new:", font=("", 9, "bold")).grid(
+            row=2, column=0, sticky="w")
+
+        notes_frame = ttk.Frame(frm)
+        notes_frame.grid(row=3, column=0, sticky="ew", pady=(4, 10))
+        notes = self._register_themed_widget(
+            tk.Text(notes_frame, width=58, height=12, wrap="word"))
+        notes.grid(row=0, column=0, sticky="nsew")
+        notes_scroll = ttk.Scrollbar(notes_frame, orient="vertical",
+                                     command=notes.yview, takefocus=0)
+        notes_scroll.grid(row=0, column=1, sticky="ns")
+        notes.config(yscrollcommand=notes_scroll.set,
+                     bg=pal["field_bg"], fg=pal["fg"])
+        notes.insert("1.0", data.get("body") or "(no release notes)")
+        notes.config(state="disabled")
+
+        self.update_dialog_status = ttk.Label(frm, text="",
+                                              foreground=self._fg("normal"))
+        self.update_dialog_status.grid(row=4, column=0, sticky="w", pady=(0, 6))
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=5, column=0, sticky="e")
+        get_btn = ttk.Button(btns, text="Download && install", takefocus=0,
+                             command=lambda: self._start_update_download(data))
+        get_btn.grid(row=0, column=0, padx=(0, 6))
+        skip_btn = ttk.Button(btns, text="Skip this version", takefocus=0,
+                              command=lambda: self._skip_update(tag))
+        skip_btn.grid(row=0, column=1, padx=(0, 6))
+        later_btn = ttk.Button(btns, text="Later", takefocus=0,
+                               command=win.destroy)
+        later_btn.grid(row=0, column=2)
+        self._update_buttons = [get_btn, skip_btn, later_btn]
+
+    def _skip_update(self, tag):
+        self.cfg["skipped_update"] = tag
+        save_config(self.cfg)
+        if self._update_win is not None and self._update_win.winfo_exists():
+            self._update_win.destroy()
+
+    def _start_update_download(self, data):
+        wanted = None
+        if getattr(sys, "frozen", False):
+            prefix = "Bendo-Lite" if LITE_BUILD else "Bendo-Setup"
+            wanted = next((a for a in data.get("assets", [])
+                           if a.get("name", "").startswith(prefix)), None)
+        if wanted is None:
+            # source runs (or a release without the expected asset): the
+            # releases page is the right place to grab it
+            webbrowser.open(data.get("html_url",
+                            f"https://github.com/{UPDATE_REPO}/releases"))
+            self._update_win.destroy()
+            return
+        for btn in self._update_buttons:
+            btn.config(state="disabled")
+        self.update_dialog_status.config(
+            text=f"Downloading {wanted['name']}...")
+        tag = data.get("tag_name", "new")
+        threading.Thread(
+            target=self._update_download_worker,
+            args=(wanted["browser_download_url"], wanted["name"], tag),
+            daemon=True).start()
+
+    def _update_download_worker(self, url, name, tag):
+        try:
+            if LITE_BUILD:
+                # portable: save the new exe beside the current one, with
+                # the version in the name so it can't collide with the
+                # running (locked) file
+                dest_dir = os.path.dirname(sys.executable)
+                base, ext = os.path.splitext(name)
+                dest = os.path.join(dest_dir, f"{base}-{tag}{ext}")
+            else:
+                dest = os.path.join(
+                    os.environ.get("TEMP", os.path.expanduser("~")), name)
+            req = urllib.request.Request(
+                url, headers={"User-Agent": f"{APP_NAME}/{APP_VERSION}"})
+            with urllib.request.urlopen(req, timeout=120) as resp, \
+                    open(dest, "wb") as f:
+                while True:
+                    chunk = resp.read(65536)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+            self.events.put(("update_downloaded", dest))
+        except Exception:
+            self.events.put(("update_downloaded", None))
+
+    def _handle_update_downloaded(self, path):
+        if path is None:
+            if self._update_win is not None and self._update_win.winfo_exists():
+                for btn in self._update_buttons:
+                    btn.config(state="normal")
+                self.update_dialog_status.config(
+                    text="Download failed - check your connection and try again.",
+                    foreground=self._fg("error"))
+            return
+        if LITE_BUILD:
+            subprocess.Popen(["explorer", "/select,", path])
+            ctypes.windll.user32.MessageBoxW(
+                None,
+                f"The new version was saved as {os.path.basename(path)} in "
+                "Bendo's folder. Bendo will close now - launch the new file "
+                "to finish updating.",
+                APP_NAME, 0x40)  # MB_ICONINFORMATION
+        else:
+            os.startfile(path)  # run the installer; it closes Bendo's files
+        self._quit_app()
+
     # ----- automatic Pillow install (source runs only) -----
     def _maybe_auto_install_pillow(self):
         """If the File Converter is enabled but Pillow is missing, install
@@ -3689,6 +3883,29 @@ class BendoApp:
 
         self.appearance_status = ttk.Label(frm, text="", foreground=self._fg("normal"))
         self.appearance_status.grid(row=next(row), column=0, sticky="w", padx=10, pady=(4, 0))
+
+        ttk.Separator(frm, orient="horizontal").grid(
+            row=next(row), column=0, sticky="ew", padx=10, pady=(14, 10))
+
+        ttk.Label(frm, text="Updates", font=("", 9, "bold")).grid(
+            row=next(row), column=0, sticky="w", padx=10)
+        self.check_updates_var = tk.BooleanVar(
+            value=self.cfg.get("check_updates", True))
+        ttk.Checkbutton(frm, text="Check for updates when Bendo starts",
+                        variable=self.check_updates_var,
+                        command=self._toggle_check_updates, takefocus=0).grid(
+            row=next(row), column=0, sticky="w", padx=10, pady=(4, 0))
+        upd_row = ttk.Frame(frm)
+        upd_row.grid(row=next(row), column=0, sticky="w", padx=10, pady=(4, 0))
+        ttk.Button(upd_row, text="Check now", takefocus=0,
+                   command=lambda: self._check_updates_async(manual=True)).grid(
+            row=0, column=0)
+        self.update_status = ttk.Label(
+            frm, text=f"Current version: {APP_VERSION}"
+                      + (" Lite" if LITE_BUILD else ""),
+            foreground=self._fg("muted"))
+        self.update_status.grid(row=next(row), column=0, sticky="w",
+                                padx=10, pady=(4, 0))
 
         ttk.Separator(frm, orient="horizontal").grid(
             row=next(row), column=0, sticky="ew", padx=10, pady=(14, 10))
@@ -4689,6 +4906,10 @@ class BendoApp:
                     self._handle_converter_progress(*payload)
                 elif kind == "pillow_install_done":
                     self._handle_pillow_install_done(payload)
+                elif kind == "update_check_result":
+                    self._handle_update_check(*payload)
+                elif kind == "update_downloaded":
+                    self._handle_update_downloaded(payload)
                 elif kind == "converter_done":
                     self._handle_converter_done(payload)
                 elif kind == "clicker_hotkey_captured":

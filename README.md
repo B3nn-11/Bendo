@@ -33,7 +33,10 @@ shutdown) and relaunches itself elevated automatically.
 
 Download the latest installer from the
 [Releases](https://github.com/B3nn-11/Bendo/releases) page and run it. It
-adds Start Menu/desktop shortcuts and a proper uninstaller.
+adds Start Menu/desktop shortcuts and a proper uninstaller, and includes a
+**"which tools would you like?"** step so Bendo starts with exactly the
+tools you want. You can add or remove any tool later with one click in
+Bendo's Settings tab - nothing to reinstall.
 
 ## Run from source
 

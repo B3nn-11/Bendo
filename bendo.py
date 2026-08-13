@@ -1385,18 +1385,52 @@ def sanitize_config(cfg):
     return cfg
 
 
+def _read_install_preset():
+    """Tool choices from the installer, or None.
+
+    The setup wizard has a "which tools would you like?" page and records
+    the answer as a preset.ini next to the exe. It only seeds a brand-new
+    config (each user's first run); after that the user's own Settings
+    choices are the truth and the preset is ignored.
+    """
+    base = os.path.dirname(sys.executable if getattr(sys, "frozen", False)
+                           else os.path.abspath(__file__))
+    path = os.path.join(base, "preset.ini")
+    if not os.path.exists(path):
+        return None
+    choices = {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                key, sep, value = line.strip().partition("=")
+                key = key.strip()
+                if sep and key in DEFAULT_CONFIG["tab_visible"]:
+                    choices[key] = value.strip() == "1"
+    except OSError:
+        return None
+    return choices or None
+
+
 def load_config():
     # deepcopy so appends/edits to nested lists and dicts never mutate
     # DEFAULT_CONFIG itself (a shallow merge shares those objects, which
     # then leaks session data into Import settings / Reset to default)
     cfg = copy.deepcopy(DEFAULT_CONFIG)
+    fresh = True
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
             cfg.update({k: v for k, v in data.items() if k in DEFAULT_CONFIG})
+            fresh = False
     except Exception:
         pass
+    if fresh:
+        preset = _read_install_preset()
+        if preset:
+            cfg["tab_visible"].update(
+                {t: v for t, v in preset.items() if t not in CORE_TAB_IDS})
+            cfg["onboarding_shown"] = True  # tools were already chosen in setup
     return sanitize_config(cfg)
 
 
@@ -3405,12 +3439,14 @@ class BendoApp:
 
         row = iter(range(1000))  # simple auto-incrementing row counter
 
-        ttk.Label(frm, text="Tabs", font=("", 9, "bold")).grid(
+        ttk.Label(frm, text="Tools", font=("", 9, "bold")).grid(
             row=next(row), column=0, sticky="w", padx=10)
-        ttk.Label(frm, text="Toggle checkboxes to hide tabs. Reorder them by "
-                             "dragging the tab buttons above (the bar reflows "
-                             "live as you drag) or with the arrows below. The "
-                             "Settings tab always stays visible and last.",
+        ttk.Label(frm, text="Untick a tool to remove it from Bendo - its tab "
+                             "disappears immediately. Tick it again any time "
+                             "to bring it back (nothing is lost). Reorder "
+                             "tools by dragging the tab buttons above or with "
+                             "the arrows below. The Settings tab always stays "
+                             "visible and last.",
                   foreground=self._fg("muted"), wraplength=360, justify="left").grid(
             row=next(row), column=0, sticky="w", padx=10, pady=(0, 8))
 

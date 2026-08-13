@@ -1116,6 +1116,10 @@ DEFAULT_CONFIG = {
 
 CORE_TAB_IDS = {"internet", "shutdown", "mixer", "notes", "power"}
 
+# The Lite edition's tab set: it trades the Internet Blocker for the
+# Bookshelf (no firewall tooling in Lite, and Bookshelf has no heavy deps).
+LITE_TAB_IDS = {"shutdown", "mixer", "notes", "power", "bookshelf"}
+
 # Hide the console windows that netsh/shutdown would otherwise flash on screen.
 NO_WINDOW = 0x08000000
 
@@ -1437,6 +1441,10 @@ def load_config():
             cfg["tab_visible"].update(
                 {t: v for t, v in preset.items() if t not in CORE_TAB_IDS})
             cfg["onboarding_shown"] = True  # tools were already chosen in setup
+        if LITE_BUILD:
+            # all of Lite's tabs start visible (bookshelf is hidden by
+            # default in the full edition, but it's core in Lite)
+            cfg["tab_visible"].update({t: True for t in LITE_TAB_IDS})
     return sanitize_config(cfg)
 
 
@@ -1545,6 +1553,7 @@ class BendoApp:
         # result from an abandoned reader thread be ignored.
         self._capture_gens = {"main": 0, "mute": 0, "clicker": 0}
         self._status_fg = STATUS_FG_LIGHT  # replaced by _apply_theme
+        self._pillow_installing = False
         self.tray_icon = None
         self.clicker_running = False
         self.clicker_stop_event = threading.Event()
@@ -1595,6 +1604,7 @@ class BendoApp:
         # Lite has no optional tools to offer, so onboarding is skipped
         if not self.cfg.get("onboarding_shown") and not LITE_BUILD:
             self.root.after(400, self._show_onboarding)
+        self._maybe_auto_install_pillow()
         self.root.attributes("-topmost", self.cfg["on_top"])
 
         unblock_internet()  # recover if a previous run crashed while blocking
@@ -1602,7 +1612,7 @@ class BendoApp:
         self.root.after(100, self._poll_events)
         root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        if keyboard is None:
+        if keyboard is None and hasattr(self, "status"):
             self.status.config(
                 text="Install the 'keyboard' package for global hotkeys "
                      "(pip install keyboard).",
@@ -1632,9 +1642,9 @@ class BendoApp:
     THEME_LABELS_REV = {v: k for k, v in THEME_LABELS.items()}
 
     def _known_tab_ids(self):
-        """All tab ids this edition offers (Lite = just the core tools)."""
+        """All tab ids this edition offers (Lite = its own five-tool set)."""
         if LITE_BUILD:
-            return [t for t in self.TAB_LABELS if t in CORE_TAB_IDS]
+            return [t for t in self.TAB_LABELS if t in LITE_TAB_IDS]
         return list(self.TAB_LABELS)
 
     TAB_ROW_OPTIONS = ["Auto", "1", "2", "3", "4"]
@@ -2014,7 +2024,7 @@ class BendoApp:
         self._register_clicker_hotkey()
 
     def _register_clicker_hotkey(self):
-        if keyboard is None:
+        if keyboard is None or "clicker" not in self.tab_frames:
             return
         if self.clicker_hotkey_handle is not None:
             try:
@@ -2032,6 +2042,8 @@ class BendoApp:
             self.clicker_status.config(text=f"Bad hotkey: {e}", foreground=self._fg("error"))
 
     def _toggle_clicker(self):
+        if "clicker" not in self.tab_frames:
+            return
         if self.clicker_running:
             self._stop_clicker()
         else:
@@ -2991,9 +3003,11 @@ class BendoApp:
 
     def _build_converter_tab(self, frm, pad):
         if Image is None:
-            ttk.Label(frm, text="Install 'Pillow' for the file converter "
-                                 "(pip install Pillow).",
-                      foreground=self._fg("error")).grid(row=0, column=0, sticky="w", **pad)
+            self.converter_missing_label = ttk.Label(
+                frm, text="Install 'Pillow' for the file converter "
+                          "(pip install Pillow).",
+                foreground=self._fg("error"), wraplength=360, justify="left")
+            self.converter_missing_label.grid(row=0, column=0, sticky="w", **pad)
             return
 
         ttk.Label(frm, text="File Converter", font=("", 9, "bold")).grid(
@@ -3117,6 +3131,74 @@ class BendoApp:
                 errors.append(f"{os.path.basename(path)}: {e}")
             self.events.put(("converter_progress", (i, len(files))))
         self.events.put(("converter_done", errors))
+
+    # ----- automatic Pillow install (source runs only) -----
+    def _maybe_auto_install_pillow(self):
+        """If the File Converter is enabled but Pillow is missing, install
+        it in the background automatically. Only applies when running from
+        source - the packaged full exe always ships Pillow, and Lite
+        doesn't offer the converter at all."""
+        if (getattr(sys, "frozen", False) or Image is not None
+                or self._pillow_installing
+                or not self.cfg["tab_visible"].get("converter")
+                or "converter" not in self.tab_frames):
+            return
+        self._pillow_installing = True
+        if hasattr(self, "converter_missing_label"):
+            self.converter_missing_label.config(
+                text="Installing Pillow automatically - the converter will "
+                     "be ready in a moment...",
+                foreground=self._fg("normal"))
+        threading.Thread(target=self._pillow_install_worker, daemon=True).start()
+
+    def _pillow_install_worker(self):
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "Pillow"],
+            capture_output=True, text=True, creationflags=NO_WINDOW)
+        self.events.put(("pillow_install_done", result.returncode == 0))
+
+    def _handle_pillow_install_done(self, ok):
+        self._pillow_installing = False
+        global Image, ImageDraw, ImageEnhance, ImageTk
+        if ok:
+            try:
+                import importlib
+                importlib.invalidate_caches()
+                from PIL import (Image as pil_image, ImageDraw as pil_draw,
+                                 ImageEnhance as pil_enhance, ImageTk as pil_tk)
+                Image, ImageDraw = pil_image, pil_draw
+                ImageEnhance, ImageTk = pil_enhance, pil_tk
+            except ImportError:
+                ok = False
+        if not ok:
+            if hasattr(self, "converter_missing_label"):
+                self.converter_missing_label.config(
+                    text="Automatic Pillow install failed - run "
+                         "'pip install Pillow' yourself and restart Bendo.",
+                    foreground=self._fg("error"))
+            return
+        self._rebuild_pillow_tabs()
+        if hasattr(self, "converter_status"):
+            self.converter_status.config(
+                text="Pillow installed - the converter is ready.",
+                foreground=self._fg("normal"))
+
+    def _rebuild_pillow_tabs(self):
+        """Re-run the builders for the Pillow-dependent tabs so their real
+        UIs replace the 'install Pillow' placeholders without a restart.
+        (The tray icon and background images still need a restart.)"""
+        pad = {"padx": 10, "pady": 6}
+        for tab_id, builder in (("converter", self._build_converter_tab),
+                                ("drawpad", self._build_drawpad_tab),
+                                ("photo", self._build_photo_tab)):
+            frame = self.tab_frames.get(tab_id)
+            if frame is None:
+                continue
+            for child in frame.winfo_children():
+                child.destroy()
+            builder(frame, pad)
+        self._apply_theme()  # the new widgets pick up the current theme
+        self._resize_to_tab()
 
     def _handle_converter_progress(self, done, total):
         self.converter_status.config(text=f"Converting {done}/{total}...", foreground=self._fg("normal"))
@@ -3364,11 +3446,12 @@ class BendoApp:
         self.backup_status.config(text=f"Imported settings from {path}", foreground=self._fg("normal"))
 
     def _apply_imported_config(self):
-        self.hotkey_var.set(self.cfg["hotkey"])
-        self.duration_var.set(str(self.cfg["duration"]))
-        self.on_top_var.set(self.cfg["on_top"])
+        if "internet" in self.tab_frames:  # absent in the Lite edition
+            self.hotkey_var.set(self.cfg["hotkey"])
+            self.duration_var.set(str(self.cfg["duration"]))
+            self.on_top_var.set(self.cfg["on_top"])
+            self.armed_var.set(self.cfg["armed"])
         self.root.attributes("-topmost", self.cfg["on_top"])
-        self.armed_var.set(self.cfg["armed"])
         self._register_hotkey()
         self._update_status()
         self._refresh_controls()
@@ -3394,17 +3477,19 @@ class BendoApp:
         if hasattr(self, "close_behavior_var"):
             self.close_behavior_var.set(self.cfg["close_behavior"])
 
-        self.clicker_interval_var.set(str(self.cfg["clicker_interval_ms"]))
-        self.clicker_button_var.set(self.CLICKER_BUTTON_LABELS[self.cfg["clicker_button"]])
-        self.clicker_limit_var.set(str(self.cfg["clicker_limit"]))
-        self.clicker_hotkey_var.set(self.cfg["clicker_hotkey"])
-        self.clicker_hotkey_armed_var.set(self.cfg["clicker_hotkey_armed"])
-        self._register_clicker_hotkey()
+        if "clicker" in self.tab_frames:  # absent in the Lite edition
+            self.clicker_interval_var.set(str(self.cfg["clicker_interval_ms"]))
+            self.clicker_button_var.set(self.CLICKER_BUTTON_LABELS[self.cfg["clicker_button"]])
+            self.clicker_limit_var.set(str(self.cfg["clicker_limit"]))
+            self.clicker_hotkey_var.set(self.cfg["clicker_hotkey"])
+            self.clicker_hotkey_armed_var.set(self.cfg["clicker_hotkey_armed"])
+            self._register_clicker_hotkey()
 
-        self.timer_days_var.set(f"{self.cfg['timer_days']:02d}")
-        self.timer_hours_var.set(f"{self.cfg['timer_hours']:02d}")
-        self.timer_minutes_var.set(f"{self.cfg['timer_minutes']:02d}")
-        self.timer_seconds_var.set(f"{self.cfg['timer_seconds']:02d}")
+        if "timer" in self.tab_frames:  # absent in the Lite edition
+            self.timer_days_var.set(f"{self.cfg['timer_days']:02d}")
+            self.timer_hours_var.set(f"{self.cfg['timer_hours']:02d}")
+            self.timer_minutes_var.set(f"{self.cfg['timer_minutes']:02d}")
+            self.timer_seconds_var.set(f"{self.cfg['timer_seconds']:02d}")
 
         self.tab_rows_var.set(self.cfg.get("tab_rows", "Auto"))
 
@@ -3888,6 +3973,7 @@ class BendoApp:
         if hasattr(self, "settings_list"):
             self._refresh_settings_rows()
         win.destroy()
+        self._maybe_auto_install_pillow()
 
     # ----- custom tab bar (native ttk.Notebook tabs are hidden) -----
     def _visible_tab_ids(self):
@@ -4077,6 +4163,8 @@ class BendoApp:
         self.cfg["tab_visible"][tab_id] = var.get()
         save_config(self.cfg)
         self._rebuild_tab_bar()
+        if tab_id == "converter" and var.get():
+            self._maybe_auto_install_pillow()
 
     def _reset_tab_settings(self):
         self.cfg["tab_order"] = self._known_tab_ids()
@@ -4095,7 +4183,7 @@ class BendoApp:
 
     # ----- status / control state -----
     def _update_status(self):
-        if keyboard is None or self.blocking:
+        if "internet" not in self.tab_frames or keyboard is None or self.blocking:
             return
         if self.cfg["armed"]:
             self.status.config(
@@ -4108,6 +4196,8 @@ class BendoApp:
                                foreground=self._fg("faint"))
 
     def _refresh_controls(self):
+        if "internet" not in self.tab_frames:
+            return
         if self.blocking:
             self.trigger_btn.config(state="disabled")
             self.restore_btn.config(state="normal")
@@ -4215,7 +4305,7 @@ class BendoApp:
 
     # ----- registration (respects armed state) -----
     def _register_hotkey(self):
-        if keyboard is None:
+        if keyboard is None or "internet" not in self.tab_frames:
             return
         if self.hotkey_handle is not None:
             try:
@@ -4240,7 +4330,8 @@ class BendoApp:
 
     # ----- blocking lifecycle -----
     def _start_block(self):
-        if self.blocking or not self.cfg["armed"]:
+        if ("internet" not in self.tab_frames or self.blocking
+                or not self.cfg["armed"]):
             return
         try:
             self.remaining = int(self.duration_var.get())
@@ -4596,6 +4687,8 @@ class BendoApp:
                     self._handle_media_update(payload)
                 elif kind == "converter_progress":
                     self._handle_converter_progress(*payload)
+                elif kind == "pillow_install_done":
+                    self._handle_pillow_install_done(payload)
                 elif kind == "converter_done":
                     self._handle_converter_done(payload)
                 elif kind == "clicker_hotkey_captured":

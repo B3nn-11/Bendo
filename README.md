@@ -41,11 +41,11 @@ Bendo's Settings tab - nothing to reinstall.
 ### Bendo Lite
 
 Prefer something smaller? `Bendo-Lite.exe` (also on the Releases page) is
-a portable, no-install build with just the five core tools - Internet
-Blocker, Shutdown Scheduler, Volume Mixer, Notes, and Power. Trade-offs:
-no system tray (closing the window exits) and no speed test, since the
-libraries behind those are compiled out. Download it and run it - nothing
-to install or uninstall.
+a portable, no-install build with five everyday tools - Shutdown
+Scheduler, Volume Mixer, Notes, Power, and Bookshelf. Trade-offs versus
+the full edition: no Internet Blocker, no system tray (closing the window
+exits), and no speed test, since the libraries behind those are compiled
+out. Download it and run it - nothing to install or uninstall.
 
 ## Run from source
 

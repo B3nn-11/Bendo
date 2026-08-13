@@ -1,4 +1,4 @@
-; Inno Setup script for the Bendo installer.
+﻿; Inno Setup script for the Bendo installer.
 ; Build:  ISCC.exe Bendo_installer.iss   (after building dist\Bendo.exe)
 ; Output: installer\Bendo-Setup-<version>.exe
 ;
@@ -9,7 +9,7 @@
 ; Bendo creates (startup scheduled task, firewall rule) on uninstall.
 
 #define MyAppName "Bendo"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.2.0"
 #define MyAppPublisher "Ben McKenzie"
 #define MyAppExeName "Bendo.exe"
 

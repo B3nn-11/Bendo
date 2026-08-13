@@ -1,9 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
-# Bendo Lite: the five core tools (Internet Blocker, Shutdown Scheduler,
-# Volume Mixer, Notes, Power) in a smaller portable exe. The runtime hook
-# sets BENDO_LITE=1 so bendo.py hides the optional tabs, and the extra
-# excludes compile out the libraries only those tabs used - which also
-# drops the system tray (pystray needs Pillow) and the speed test.
+# Bendo Lite: five everyday tools (Shutdown Scheduler, Volume Mixer,
+# Notes, Power, Bookshelf) in a smaller portable exe - no Internet
+# Blocker in this edition. The runtime hook sets BENDO_LITE=1 so bendo.py
+# limits itself to that tab set, and the extra excludes compile out the
+# libraries only the other tabs used - which also drops the system tray
+# (pystray needs Pillow) and the speed test.
 # Build: python -m PyInstaller Bendo-Lite.spec
 
 
